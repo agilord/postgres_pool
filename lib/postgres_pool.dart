@@ -149,6 +149,9 @@ class PgPool implements PostgreSQLExecutionContext {
   final _available = <_ConnectionCtx>[];
   final _events = StreamController<PgPoolEvent>.broadcast();
 
+  /// Makes sure only one connection is opening at a time.
+  Completer _openCompleter;
+
   PgPool(
     PgUrl url, {
     int maxActive = 2,
@@ -307,19 +310,29 @@ class PgPool implements PostgreSQLExecutionContext {
   }
 
   Future<_ConnectionCtx> _open() async {
-    final url = _url;
-    final c = PostgreSQLConnection(
-      url.host,
-      url.port,
-      url.database,
-      username: url.username,
-      password: url.password,
-      useSSL: url.useSecure,
-      timeoutInSeconds: _connectTimeoutSeconds,
-      queryTimeoutInSeconds: _queryTimeoutSeconds,
-    );
-    await c.open();
-    return _ConnectionCtx(c);
+    while (_openCompleter != null) {
+      await _openCompleter.future;
+    }
+    _openCompleter = Completer();
+    try {
+      final url = _url;
+      final c = PostgreSQLConnection(
+        url.host,
+        url.port,
+        url.database,
+        username: url.username,
+        password: url.password,
+        useSSL: url.useSecure,
+        timeoutInSeconds: _connectTimeoutSeconds,
+        queryTimeoutInSeconds: _queryTimeoutSeconds,
+      );
+      await c.open();
+      return _ConnectionCtx(c);
+    } finally {
+      final c = _openCompleter;
+      _openCompleter = null;
+      c.complete();
+    }
   }
 
   Future<bool> _testConnection(_ConnectionCtx ctx) async {
