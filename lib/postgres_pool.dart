@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:io';
+import 'dart:math';
 
 import 'package:executor/executor.dart';
 import 'package:postgres/postgres.dart';
@@ -146,7 +147,8 @@ class PgPool implements PostgreSQLExecutionContext {
   final int _maxSuccessCount;
 
   final Executor _executor;
-  final _available = <_ConnectionCtx>[];
+  final _random = Random();
+  final _connections = <_ConnectionCtx>[];
   final _events = StreamController<PgPoolEvent>.broadcast();
 
   /// Makes sure only one connection is opening at a time.
@@ -174,7 +176,7 @@ class PgPool implements PostgreSQLExecutionContext {
 
   /// Get the current debug information of the pool's internal state.
   PgPoolInfo info() => PgPoolInfo(
-        available: _available.length,
+        available: _connections.where((c) => c.isAvailable).length,
         active: _executor.runningCount,
         waiting: _executor.waitingCount,
       );
@@ -232,8 +234,8 @@ class PgPool implements PostgreSQLExecutionContext {
 
   Future close() async {
     await _executor.close();
-    while (_available.isNotEmpty) {
-      await _close(_available.removeLast().connection);
+    while (_connections.isNotEmpty) {
+      await _close(_connections.last);
     }
   }
 
@@ -252,18 +254,29 @@ class PgPool implements PostgreSQLExecutionContext {
     });
   }
 
-  Future<R> _useOrCreate<R>(
-      Future<R> Function(PostgreSQLConnection c) body) async {
-    _ConnectionCtx ctx;
-    while (_available.isNotEmpty) {
-      final entry = _available.removeLast();
-      if (await _testConnection(entry)) {
-        ctx = entry;
-        break;
+  _ConnectionCtx _lockAvailable() {
+    final list = _connections.where((c) => c.isAvailable).toList();
+    if (list.isEmpty) return null;
+    final entry =
+        list.length == 1 ? list.single : list[_random.nextInt(list.length)];
+    entry.isAvailable = false;
+    return entry;
+  }
+
+  Future<_ConnectionCtx> _tryAcquireAvailable() async {
+    for (var ctx = _lockAvailable(); ctx != null; ctx = _lockAvailable()) {
+      if (await _testConnection(ctx)) {
+        return ctx;
       } else {
-        await _close(entry.connection);
+        await _close(ctx);
       }
     }
+    return null;
+  }
+
+  Future<R> _useOrCreate<R>(
+      Future<R> Function(PostgreSQLConnection c) body) async {
+    var ctx = await _tryAcquireAvailable();
     for (var i = 3; i > 0; i--) {
       _events.add(PgPoolEvent(PgPoolAction.connecting));
       final sw = Stopwatch()..start();
@@ -290,17 +303,17 @@ class PgPool implements PostgreSQLExecutionContext {
       final r = await body(ctx.connection);
       ctx.lastReturned = DateTime.now();
       ctx.successCount++;
-      _available.add(ctx);
+      ctx.isAvailable = true;
       return r;
     } catch (e) {
       if (e is PostgreSQLException ||
           e is IOException ||
           e is TimeoutException) {
-        await _close(ctx.connection);
+        await _close(ctx);
       } else {
         ctx.lastReturned = DateTime.now();
         ctx.errorCount++;
-        _available.add(ctx);
+        ctx.isAvailable = true;
       }
       rethrow;
     } finally {
@@ -327,7 +340,9 @@ class PgPool implements PostgreSQLExecutionContext {
         queryTimeoutInSeconds: _queryTimeoutSeconds,
       );
       await c.open();
-      return _ConnectionCtx(c);
+      final ctx = _ConnectionCtx(c);
+      _connections.add(ctx);
+      return ctx;
     } finally {
       final c = _openCompleter;
       _openCompleter = null;
@@ -356,12 +371,19 @@ class PgPool implements PostgreSQLExecutionContext {
     return false;
   }
 
-  Future _close(PostgreSQLConnection c) async {
+  Future _close(_ConnectionCtx ctx) async {
+    ctx.isAvailable = false;
+    if (ctx.closingCompleter != null) {
+      await ctx.closingCompleter.future;
+      return;
+    }
+    ctx.closingCompleter = Completer();
+
     final sw = Stopwatch()..start();
     try {
-      if (!c.isClosed) {
+      if (!ctx.connection.isClosed) {
         _events.add(PgPoolEvent(PgPoolAction.closing));
-        await c.close();
+        await ctx.connection.close();
         _events.add(
             PgPoolEvent(PgPoolAction.closingCompleted, elapsed: sw.elapsed));
       }
@@ -372,6 +394,8 @@ class PgPool implements PostgreSQLExecutionContext {
         error: e,
         stackTrace: st,
       ));
+    } finally {
+      _connections.remove(ctx);
     }
   }
 
@@ -434,6 +458,8 @@ class _ConnectionCtx {
   int successCount = 0;
   int errorCount = 0;
   Duration elapsed = Duration.zero;
+  bool isAvailable = false;
+  Completer closingCompleter;
 
   _ConnectionCtx(this.connection) : created = DateTime.now();
 }
