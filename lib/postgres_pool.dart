@@ -72,6 +72,27 @@ class PgUrl {
           'sslmode': useSecure ? 'require' : 'allow',
         },
       ).toString();
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is PgUrl &&
+          runtimeType == other.runtimeType &&
+          host == other.host &&
+          port == other.port &&
+          database == other.database &&
+          username == other.username &&
+          password == other.password &&
+          useSecure == other.useSecure;
+
+  @override
+  int get hashCode =>
+      host.hashCode ^
+      port.hashCode ^
+      database.hashCode ^
+      username.hashCode ^
+      password.hashCode ^
+      useSecure.hashCode;
 }
 
 /// The list of [PgPool] actions.
