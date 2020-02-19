@@ -263,15 +263,7 @@ class PgPool implements PostgreSQLExecutionContext {
   Future<R> _withConnection<R>(
       Future<R> Function(PostgreSQLConnection c) body) {
     return _executor.scheduleTask(() async {
-      final sw = Stopwatch()..start();
-      try {
-        return await _useOrCreate(body);
-      } finally {
-        sw.stop();
-        if (sw.elapsed.inSeconds >= 5) {
-          print('slow... ${sw.elapsed}');
-        }
-      }
+      return await _useOrCreate(body);
     });
   }
 
