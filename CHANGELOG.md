@@ -1,3 +1,21 @@
+## 2.0.0
+
+**BREAKING CHANGES**: refactor to match `package:cockroachdb_pool`'s requirements.
+
+- Renamed or refactored:
+  - `PgCallbackFn` -> `PgSessionFn`
+  - `PgUrl` -> `PgEndpoint`
+    - `useSecure` -> `requireSsl`
+  - `PgPool`
+    - Constructor parameters moved into `PgPoolSettings`, which allows
+      tuning them while the pool is running.
+    - `info()` -> `status()`
+  - `PgPoolInfo` -> `PgPoolStatus`
+    - `available` removed, use `connections` instead.
+    - `active` -> `activeSessionCount`
+    - `waiting` -> `pendingSessionCount`
+- Using `package:retry`.
+
 ## 1.1.0
 
 - Only one connection is opened at a time.

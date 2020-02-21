@@ -3,29 +3,35 @@ import 'dart:io';
 import 'dart:math';
 
 import 'package:executor/executor.dart';
+import 'package:meta/meta.dart';
 import 'package:postgres/postgres.dart';
+import 'package:retry/retry.dart';
 
 export 'package:postgres/postgres.dart';
 
-/// Callback function that will be called once a connection becomes available.
-typedef PgCallbackFn<R> = Future<R> Function(PostgreSQLExecutionContext c);
+/// A session is a continuous use of a single connection (inside or outside of a
+/// transaction).
+///
+/// This callback function will be called once a connection becomes available.
+typedef PgSessionFn<R> = Future<R> Function(PostgreSQLExecutionContext c);
 
-/// The server parameters to connect to.
-class PgUrl {
+/// The PostgreSQL server endpoint and its configuration to use when opening a
+/// new connection.
+class PgEndpoint {
   final String host;
   final int port;
   final String database;
   final String username;
   final String password;
-  final bool useSecure;
+  final bool requireSsl;
 
-  PgUrl({
+  PgEndpoint({
     this.host,
     this.port,
     this.database,
     this.username,
     this.password,
-    this.useSecure = false,
+    this.requireSsl = false,
   });
 
   /// Parses the most common connection URL formats:
@@ -33,32 +39,42 @@ class PgUrl {
   /// - postgresql://host:port/dbname?username=user&password=pwd
   ///
   /// Set ?sslmode=require to force secure SSL connection.
-  factory PgUrl.parse(String url) {
-    final uri = Uri.parse(url);
+  factory PgEndpoint.parse(url) {
+    final uri = url is Uri ? url : Uri.parse(url as String);
     final userInfoParts = uri.userInfo.split(':');
     final username = userInfoParts.length == 2 ? userInfoParts[0] : null;
     final password = userInfoParts.length == 2 ? userInfoParts[1] : null;
-    return PgUrl(
+    return PgEndpoint(
       host: uri.host,
       port: uri.port,
       database: uri.path.substring(1),
       username: username ?? uri.queryParameters['username'],
       password: password ?? uri.queryParameters['password'],
-      useSecure: uri.queryParameters['sslmode'] == 'require',
+      requireSsl: uri.queryParameters['sslmode'] == 'require',
     );
   }
 
-  /// Creates a new [PgUrl] by replacing the current values with non-null
+  /// Creates a new [PgEndpoint] by replacing the current values with non-null
   /// parameters.
   ///
   /// Parameters with `null` values are ignored (keeping current value).
-  PgUrl replace({String database}) => PgUrl(
-        host: host,
-        port: port,
-        database: database ?? this.database,
-        username: username,
-        password: password,
-      );
+  PgEndpoint replace({
+    String host,
+    int port,
+    String database,
+    String username,
+    String password,
+    bool requireSsl,
+  }) {
+    return PgEndpoint(
+      host: host ?? this.host,
+      port: port ?? this.port,
+      database: database ?? this.database,
+      username: username ?? this.username,
+      password: password ?? this.password,
+      requireSsl: requireSsl ?? this.requireSsl,
+    );
+  }
 
   @override
   String toString() => Uri(
@@ -69,21 +85,21 @@ class PgUrl {
         queryParameters: {
           'username': username,
           'password': password,
-          'sslmode': useSecure ? 'require' : 'allow',
+          'sslmode': requireSsl ? 'require' : 'allow',
         },
       ).toString();
 
   @override
   bool operator ==(Object other) =>
       identical(this, other) ||
-      other is PgUrl &&
+      other is PgEndpoint &&
           runtimeType == other.runtimeType &&
           host == other.host &&
           port == other.port &&
           database == other.database &&
           username == other.username &&
           password == other.password &&
-          useSecure == other.useSecure;
+          requireSsl == other.requireSsl;
 
   @override
   int get hashCode =>
@@ -92,24 +108,33 @@ class PgUrl {
       database.hashCode ^
       username.hashCode ^
       password.hashCode ^
-      useSecure.hashCode;
+      requireSsl.hashCode;
 }
 
 /// The list of [PgPool] actions.
 abstract class PgPoolAction {
   static final connecting = 'connecting';
-  static final connectingCompleted = 'connectingCompleted';
-  static final connectingFailed = 'connectingFailed';
+  static final connectingCompleted = 'connecting-completed';
+  static final connectingFailed = 'connecting-failed';
   static final closing = 'closing';
-  static final closingCompleted = 'closingCompleted';
-  static final closingFailed = 'closingFailed';
+  static final closingCompleted = 'closing-completed';
+  static final closingFailed = 'closing-failed';
   static final query = 'query';
-  static final queryCompleted = 'queryCompleted';
-  static final queryFailed = 'queryFailed';
+  static final queryCompleted = 'query-completed';
+  static final queryFailed = 'query-failed';
 }
 
 /// Describes a pool event (with error - if there were any).
 class PgPoolEvent {
+  /// The id of the connection
+  final int connectionId;
+
+  /// The identifier of the session (e.g. activity type)
+  final String sessionId;
+
+  /// The unique identifier of a request (used for correlating log entries).
+  final String traceId;
+
   /// One of [PgPoolAction] values.
   final String action;
 
@@ -128,128 +153,227 @@ class PgPoolEvent {
   /// The stack trace when the error happened (if there was any).
   final StackTrace stackTrace;
 
-  PgPoolEvent(
-    this.action, {
+  PgPoolEvent({
+    @required this.connectionId,
+    this.sessionId,
+    this.traceId,
+    @required this.action,
     this.query,
     this.substitutionValues,
     this.elapsed,
     this.error,
     this.stackTrace,
   });
+
+  PgPoolEvent.fromPgPoolEvent(PgPoolEvent other)
+      : connectionId = other.connectionId,
+        sessionId = other.sessionId,
+        traceId = other.traceId,
+        action = other.action,
+        query = other.query,
+        substitutionValues = other.substitutionValues,
+        elapsed = other.elapsed,
+        error = other.error,
+        stackTrace = other.stackTrace;
+}
+
+/// A snapshot of the connection's internal state.
+class PgConnectionStatus {
+  /// The numerical id of the connection.
+  final int connectionId;
+
+  /// If the connection is open and not in use.
+  final bool isIdle;
+
+  /// The time when the connection was opened.
+  final DateTime opened;
+
+  PgConnectionStatus({
+    @required this.connectionId,
+    @required this.isIdle,
+    @required this.opened,
+  });
 }
 
 /// A snapshot of the [PgPool]'s internal state.
-class PgPoolInfo {
-  /// The number of connections readily available.
-  final int available;
+class PgPoolStatus {
+  /// The status of the connections.
+  final List<PgConnectionStatus> connections;
 
-  /// The number of callbacks using an active connection.
-  final int active;
+  /// The number of sessions using an active connection.
+  final int activeSessionCount;
 
-  /// The number of callbacks waiting for a connection.
-  final int waiting;
+  /// The number of sessions waiting for a connection to become available.
+  final int pendingSessionCount;
 
-  PgPoolInfo({
-    this.available,
-    this.active,
-    this.waiting,
+  PgPoolStatus({
+    @required this.connections,
+    @required this.activeSessionCount,
+    @required this.pendingSessionCount,
   });
+
+  PgPoolStatus.fromPgPoolStatus(PgPoolStatus other)
+      : connections = other.connections,
+        activeSessionCount = other.activeSessionCount,
+        pendingSessionCount = other.pendingSessionCount;
+}
+
+/// The settings of the [PgPool].
+class PgPoolSettings {
+  /// The maximum number of concurrent sessions.
+  int concurrency = 1;
+
+  /// The timeout after the connection attempt is assumed to be failing.
+  /// Fractional seconds will be omitted.
+  /// Value is applied only on new connections.
+  Duration connectTimeout = Duration(seconds: 15);
+
+  /// The timeout after a query is assumed to be failing.
+  /// Fractional seconds will be omitted.
+  /// Value is applied only on new connections.
+  Duration queryTimeout = Duration(minutes: 5);
+
+  /// If a connection is idle for longer than this threshold, it will be tested
+  /// with a simple SQL query before allocating it to a session.
+  Duration idleTestThreshold = Duration(minutes: 1);
+
+  /// The maximum duration a connection is kept open.
+  /// New sessions won't be scheduled after this limit is reached.
+  Duration maxConnectionAge = Duration(hours: 12);
+
+  /// The maximum duration a connection is used by sessions.
+  /// New sessions won't be scheduled after this limit is reached.
+  Duration maxSessionUse = Duration(hours: 8);
+
+  /// The maximum number of error events to be collected on a connection.
+  /// New sessions won't be scheduled after this limit is reached.
+  int maxErrorCount = 128;
+
+  /// The maximum number of queries to be run on a connection.
+  /// New sessions won't be scheduled after this limit is reached.
+  int maxQueryCount = 1024 * 1024;
+
+  /// The default retry options for `run` / `runTx` operations.
+  RetryOptions retryOptions = RetryOptions(
+    maxAttempts: 1,
+    delayFactor: Duration(milliseconds: 5),
+    maxDelay: Duration(seconds: 1),
+    randomizationFactor: 0.1,
+  );
+
+  void applyFrom(PgPoolSettings other) {
+    concurrency = other.concurrency;
+    connectTimeout = other.connectTimeout;
+    queryTimeout = other.queryTimeout;
+    idleTestThreshold = other.idleTestThreshold;
+    maxConnectionAge = other.maxConnectionAge;
+    maxSessionUse = other.maxSessionUse;
+    maxErrorCount = other.maxErrorCount;
+    maxQueryCount = other.maxQueryCount;
+    retryOptions = other.retryOptions;
+  }
 }
 
 /// Single-server connection pool for PostgresSQL database access.
 class PgPool implements PostgreSQLExecutionContext {
-  final PgUrl _url;
-  final int _connectTimeoutSeconds;
-  final int _queryTimeoutSeconds;
-  final Duration _idleTestThreshold;
-  final Duration _maxAge;
-  final Duration _maxInUse;
-  final int _maxErrorCount;
-  final int _maxSuccessCount;
+  final PgEndpoint _url;
 
   final Executor _executor;
   final _random = Random();
   final _connections = <_ConnectionCtx>[];
   final _events = StreamController<PgPoolEvent>.broadcast();
+  int _nextConnectionId = 1;
 
   /// Makes sure only one connection is opening at a time.
   Completer _openCompleter;
+  PgPoolSettings settings;
 
-  PgPool(
-    PgUrl url, {
-    int maxActive = 2,
-    int connectTimeoutSeconds = 15,
-    int queryTimeoutSeconds = 180,
-    Duration idleTestThreshold = const Duration(seconds: 5),
-    Duration maxAge = const Duration(hours: 12),
-    Duration maxInUse = const Duration(hours: 4),
-    int maxErrorCount = 128,
-    int maxSuccessCount = 1024 * 1024,
-  })  : _executor = Executor(concurrency: maxActive),
-        _url = url,
-        _connectTimeoutSeconds = connectTimeoutSeconds,
-        _queryTimeoutSeconds = queryTimeoutSeconds,
-        _idleTestThreshold = idleTestThreshold,
-        _maxAge = maxAge,
-        _maxInUse = maxInUse,
-        _maxErrorCount = maxErrorCount,
-        _maxSuccessCount = maxSuccessCount;
+  PgPool(PgEndpoint url, {PgPoolSettings settings})
+      : settings = settings ?? PgPoolSettings(),
+        _executor = Executor(),
+        _url = url;
 
   /// Get the current debug information of the pool's internal state.
-  PgPoolInfo info() => PgPoolInfo(
-        available: _connections.where((c) => c.isAvailable).length,
-        active: _executor.runningCount,
-        waiting: _executor.waitingCount,
+  PgPoolStatus status() => PgPoolStatus(
+        connections: _connections.map((c) => c.status()).toList(),
+        activeSessionCount: _executor.runningCount,
+        pendingSessionCount: _executor.waitingCount,
       );
 
   /// The events that happen while the pool is working.
   Stream<PgPoolEvent> get events => _events.stream;
 
-  /// Runs [action] outside of a transaction.
+  /// Runs [fn] outside of a transaction.
   Future<R> run<R>(
-    PgCallbackFn<R> action, {
-    int maxRetry = 0,
+    PgSessionFn<R> fn, {
+    RetryOptions retryOptions,
     FutureOr<R> Function() orElse,
+    FutureOr<bool> Function(Exception) retryIf,
+    String sessionId,
+    String traceId,
   }) async {
-    for (var i = maxRetry;; i--) {
-      try {
-        return await _withConnection(
-          (c) => action(_PgExecutionContextWrapper(c, _events)),
-        );
-      } catch (e) {
-        if (i == 0) {
-          if (orElse != null) {
-            return await orElse();
-          } else {
-            rethrow;
-          }
-        }
+    retryOptions ??= settings.retryOptions;
+    try {
+      return await retryOptions.retry(
+        () async {
+          return await _withConnection(
+            (c) => fn(_PgExecutionContextWrapper(
+              c.connectionId,
+              c.connection,
+              sessionId,
+              traceId,
+              _events,
+            )),
+          );
+        },
+        retryIf: (e) async =>
+            e is! PostgreSQLException &&
+            e is! IOException &&
+            (retryIf == null || await retryIf(e)),
+      );
+    } catch (e) {
+      if (orElse != null) {
+        return await orElse();
       }
+      rethrow;
     }
   }
 
-  /// Runs [action] in a transaction.
+  /// Runs [fn] in a transaction.
   Future<R> runTx<R>(
-    PgCallbackFn<R> action, {
-    int maxRetry = 0,
+    PgSessionFn<R> fn, {
+    RetryOptions retryOptions,
     FutureOr<R> Function() orElse,
+    FutureOr<bool> Function(Exception) retryIf,
+    String sessionId,
+    String traceId,
   }) async {
-    for (var i = maxRetry;; i--) {
-      try {
-        return await _withConnection((conn) async {
-          return await conn.transaction(
-            (c) => action(_PgExecutionContextWrapper(c, _events)),
-          ) as R;
-        });
-      } catch (e) {
-        if (i == 0) {
-          if (orElse != null) {
-            return await orElse();
-          } else {
-            rethrow;
-          }
-        }
+    retryOptions ??= settings.retryOptions;
+    try {
+      return await retryOptions.retry(
+        () async {
+          return await _withConnection((c) async {
+            return await c.connection.transaction(
+              (conn) => fn(_PgExecutionContextWrapper(
+                c.connectionId,
+                conn,
+                sessionId,
+                traceId,
+                _events,
+              )),
+            ) as R;
+          });
+        },
+        retryIf: (e) async =>
+            e is! PostgreSQLException &&
+            e is! IOException &&
+            (retryIf == null || await retryIf(e)),
+      );
+    } catch (e) {
+      if (orElse != null) {
+        return await orElse();
       }
+      rethrow;
     }
   }
 
@@ -258,26 +382,27 @@ class PgPool implements PostgreSQLExecutionContext {
     while (_connections.isNotEmpty) {
       await _close(_connections.last);
     }
+    await _events.close();
   }
 
-  Future<R> _withConnection<R>(
-      Future<R> Function(PostgreSQLConnection c) body) {
+  Future<R> _withConnection<R>(Future<R> Function(_ConnectionCtx c) body) {
+    _executor.concurrency = settings.concurrency;
     return _executor.scheduleTask(() async {
       return await _useOrCreate(body);
     });
   }
 
-  _ConnectionCtx _lockAvailable() {
-    final list = _connections.where((c) => c.isAvailable).toList();
+  _ConnectionCtx _lockIdle() {
+    final list = _connections.where((c) => c.isIdle).toList();
     if (list.isEmpty) return null;
     final entry =
         list.length == 1 ? list.single : list[_random.nextInt(list.length)];
-    entry.isAvailable = false;
+    entry.isIdle = false;
     return entry;
   }
 
   Future<_ConnectionCtx> _tryAcquireAvailable() async {
-    for (var ctx = _lockAvailable(); ctx != null; ctx = _lockAvailable()) {
+    for (var ctx = _lockIdle(); ctx != null; ctx = _lockIdle()) {
       if (await _testConnection(ctx)) {
         return ctx;
       } else {
@@ -287,51 +412,32 @@ class PgPool implements PostgreSQLExecutionContext {
     return null;
   }
 
-  Future<R> _useOrCreate<R>(
-      Future<R> Function(PostgreSQLConnection c) body) async {
-    var ctx = await _tryAcquireAvailable();
-    for (var i = 3; i > 0; i--) {
-      _events.add(PgPoolEvent(PgPoolAction.connecting));
-      final sw = Stopwatch()..start();
-      try {
-        ctx ??= await _open();
-        _events.add(PgPoolEvent(
-          PgPoolAction.connectingCompleted,
-          elapsed: sw.elapsed,
-        ));
-      } catch (e, st) {
-        _events.add(PgPoolEvent(
-          PgPoolAction.connectingFailed,
-          elapsed: sw.elapsed,
-          error: e,
-          stackTrace: st,
-        ));
-        if (i == 1) {
-          rethrow;
-        }
-      }
-    }
+  Future<R> _useOrCreate<R>(Future<R> Function(_ConnectionCtx c) body) async {
+    final ctx = await _tryAcquireAvailable() ?? await _open();
     final sw = Stopwatch()..start();
     try {
-      final r = await body(ctx.connection);
+      final r = await body(ctx);
       ctx.lastReturned = DateTime.now();
-      ctx.successCount++;
-      ctx.isAvailable = true;
-      return r;
-    } catch (e) {
-      if (e is PostgreSQLException ||
-          e is IOException ||
-          e is TimeoutException) {
-        await _close(ctx);
-      } else {
-        ctx.lastReturned = DateTime.now();
-        ctx.errorCount++;
-        ctx.isAvailable = true;
-      }
-      rethrow;
-    } finally {
-      sw.stop();
       ctx.elapsed += sw.elapsed;
+      ctx.queryCount++;
+      ctx.isIdle = true;
+      return r;
+    } on PostgreSQLException catch (_) {
+      await _close(ctx);
+      rethrow;
+    } on IOException catch (_) {
+      await _close(ctx);
+      rethrow;
+    } on TimeoutException catch (_) {
+      await _close(ctx);
+      rethrow;
+    } catch (e) {
+      ctx.lastReturned = DateTime.now();
+      ctx.elapsed += sw.elapsed;
+      ctx.errorCount++;
+      ctx.queryCount++;
+      ctx.isIdle = true;
+      rethrow;
     }
   }
 
@@ -340,22 +446,50 @@ class PgPool implements PostgreSQLExecutionContext {
       await _openCompleter.future;
     }
     _openCompleter = Completer();
+    final connectionId = _nextConnectionId++;
+    _events.add(PgPoolEvent(
+      connectionId: connectionId,
+      action: PgPoolAction.connecting,
+    ));
     try {
-      final url = _url;
-      final c = PostgreSQLConnection(
-        url.host,
-        url.port,
-        url.database,
-        username: url.username,
-        password: url.password,
-        useSSL: url.useSecure,
-        timeoutInSeconds: _connectTimeoutSeconds,
-        queryTimeoutInSeconds: _queryTimeoutSeconds,
-      );
-      await c.open();
-      final ctx = _ConnectionCtx(c);
-      _connections.add(ctx);
-      return ctx;
+      for (var i = 3; i > 0; i--) {
+        final sw = Stopwatch()..start();
+        try {
+          final c = PostgreSQLConnection(
+            _url.host,
+            _url.port,
+            _url.database,
+            username: _url.username,
+            password: _url.password,
+            useSSL: _url.requireSsl,
+            timeoutInSeconds: settings.connectTimeout.inSeconds,
+            queryTimeoutInSeconds: settings.queryTimeout.inSeconds,
+          );
+          await c.open();
+          final ctx = _ConnectionCtx(connectionId, c);
+          _connections.add(ctx);
+
+          _events.add(PgPoolEvent(
+            connectionId: connectionId,
+            action: PgPoolAction.connectingCompleted,
+            elapsed: sw.elapsed,
+          ));
+
+          return ctx;
+        } catch (e, st) {
+          if (i == 1) {
+            _events.add(PgPoolEvent(
+              connectionId: connectionId,
+              action: PgPoolAction.connectingFailed,
+              elapsed: sw.elapsed,
+              error: e,
+              stackTrace: st,
+            ));
+            rethrow;
+          }
+        }
+      }
+      throw StateError('Should not reach this code.');
     } finally {
       final c = _openCompleter;
       _openCompleter = null;
@@ -365,16 +499,16 @@ class PgPool implements PostgreSQLExecutionContext {
 
   Future<bool> _testConnection(_ConnectionCtx ctx) async {
     final now = DateTime.now();
-    final totalAge = now.difference(ctx.created).abs();
-    final shouldClose = (totalAge >= _maxAge) ||
-        (ctx.elapsed >= _maxInUse) ||
-        (ctx.errorCount >= _maxErrorCount) ||
-        (ctx.successCount >= _maxSuccessCount);
+    final totalAge = now.difference(ctx.opened).abs();
+    final shouldClose = (totalAge >= settings.maxConnectionAge) ||
+        (ctx.elapsed >= settings.maxSessionUse) ||
+        (ctx.errorCount >= settings.maxErrorCount) ||
+        (ctx.queryCount >= settings.maxQueryCount);
     if (shouldClose) {
       return false;
     }
     final idleAge = now.difference(ctx.lastReturned).abs();
-    if (idleAge < _idleTestThreshold) {
+    if (idleAge < settings.idleTestThreshold) {
       return true;
     }
     try {
@@ -385,7 +519,7 @@ class PgPool implements PostgreSQLExecutionContext {
   }
 
   Future _close(_ConnectionCtx ctx) async {
-    ctx.isAvailable = false;
+    ctx.isIdle = false;
     if (ctx.closingCompleter != null) {
       await ctx.closingCompleter.future;
       return;
@@ -395,14 +529,21 @@ class PgPool implements PostgreSQLExecutionContext {
     final sw = Stopwatch()..start();
     try {
       if (!ctx.connection.isClosed) {
-        _events.add(PgPoolEvent(PgPoolAction.closing));
+        _events.add(PgPoolEvent(
+          connectionId: ctx.connectionId,
+          action: PgPoolAction.closing,
+        ));
         await ctx.connection.close();
-        _events.add(
-            PgPoolEvent(PgPoolAction.closingCompleted, elapsed: sw.elapsed));
+        _events.add(PgPoolEvent(
+          connectionId: ctx.connectionId,
+          action: PgPoolAction.closingCompleted,
+          elapsed: sw.elapsed,
+        ));
       }
     } catch (e, st) {
       _events.add(PgPoolEvent(
-        PgPoolAction.closingFailed,
+        connectionId: ctx.connectionId,
+        action: PgPoolAction.closingFailed,
         elapsed: sw.elapsed,
         error: e,
         stackTrace: st,
@@ -413,13 +554,18 @@ class PgPool implements PostgreSQLExecutionContext {
   }
 
   @override
-  int get queueSize => null;
+  int get queueSize =>
+      _connections.fold<int>(0, (a, b) => a + b.connection.queueSize);
 
   @override
-  Future<PostgreSQLResult> query(String fmtString,
-      {Map<String, dynamic> substitutionValues,
-      bool allowReuse = true,
-      int timeoutInSeconds}) {
+  Future<PostgreSQLResult> query(
+    String fmtString, {
+    Map<String, dynamic> substitutionValues,
+    bool allowReuse = true,
+    int timeoutInSeconds,
+    String sessionId,
+    String traceId,
+  }) {
     return run(
       (c) => c.query(
         fmtString,
@@ -427,18 +573,27 @@ class PgPool implements PostgreSQLExecutionContext {
         allowReuse: allowReuse,
         timeoutInSeconds: timeoutInSeconds,
       ),
+      sessionId: sessionId,
+      traceId: traceId,
     );
   }
 
   @override
-  Future<int> execute(String fmtString,
-      {Map<String, dynamic> substitutionValues, int timeoutInSeconds}) {
+  Future<int> execute(
+    String fmtString, {
+    Map<String, dynamic> substitutionValues,
+    int timeoutInSeconds,
+    String sessionId,
+    String traceId,
+  }) {
     return run(
       (c) => c.execute(
         fmtString,
         substitutionValues: substitutionValues,
         timeoutInSeconds: timeoutInSeconds,
       ),
+      sessionId: sessionId,
+      traceId: traceId,
     );
   }
 
@@ -449,10 +604,13 @@ class PgPool implements PostgreSQLExecutionContext {
 
   @override
   Future<List<Map<String, Map<String, dynamic>>>> mappedResultsQuery(
-      String fmtString,
-      {Map<String, dynamic> substitutionValues,
-      bool allowReuse = true,
-      int timeoutInSeconds}) {
+    String fmtString, {
+    Map<String, dynamic> substitutionValues,
+    bool allowReuse = true,
+    int timeoutInSeconds,
+    String sessionId,
+    String traceId,
+  }) {
     return run(
       (c) => c.mappedResultsQuery(
         fmtString,
@@ -460,28 +618,48 @@ class PgPool implements PostgreSQLExecutionContext {
         allowReuse: allowReuse,
         timeoutInSeconds: timeoutInSeconds,
       ),
+      sessionId: sessionId,
+      traceId: traceId,
     );
   }
 }
 
 class _ConnectionCtx {
+  final int connectionId;
   final PostgreSQLConnection connection;
-  final DateTime created;
+  final DateTime opened;
   DateTime lastReturned;
-  int successCount = 0;
+  int queryCount = 0;
   int errorCount = 0;
   Duration elapsed = Duration.zero;
-  bool isAvailable = false;
+  bool isIdle = false;
   Completer closingCompleter;
 
-  _ConnectionCtx(this.connection) : created = DateTime.now();
+  _ConnectionCtx(this.connectionId, this.connection) : opened = DateTime.now();
+
+  PgConnectionStatus status() {
+    return PgConnectionStatus(
+      connectionId: connectionId,
+      isIdle: isIdle,
+      opened: opened,
+    );
+  }
 }
 
 class _PgExecutionContextWrapper implements PostgreSQLExecutionContext {
+  final int connectionId;
   final PostgreSQLExecutionContext _delegate;
+  final String sessionId;
+  final String traceId;
   final Sink<PgPoolEvent> _eventSink;
 
-  _PgExecutionContextWrapper(this._delegate, this._eventSink);
+  _PgExecutionContextWrapper(
+    this.connectionId,
+    this._delegate,
+    this.sessionId,
+    this.traceId,
+    this._eventSink,
+  );
 
   Future<R> _run<R>(
     Future<R> Function() body,
@@ -491,13 +669,19 @@ class _PgExecutionContextWrapper implements PostgreSQLExecutionContext {
     final sw = Stopwatch()..start();
     try {
       _eventSink.add(PgPoolEvent(
-        PgPoolAction.query,
+        connectionId: connectionId,
+        sessionId: sessionId,
+        traceId: traceId,
+        action: PgPoolAction.query,
         query: query,
         substitutionValues: substitutionValues,
       ));
       final r = await body();
       _eventSink.add(PgPoolEvent(
-        PgPoolAction.queryCompleted,
+        connectionId: connectionId,
+        sessionId: sessionId,
+        traceId: traceId,
+        action: PgPoolAction.queryCompleted,
         query: query,
         substitutionValues: substitutionValues,
         elapsed: sw.elapsed,
@@ -505,7 +689,10 @@ class _PgExecutionContextWrapper implements PostgreSQLExecutionContext {
       return r;
     } catch (e, st) {
       _eventSink.add(PgPoolEvent(
-        PgPoolAction.queryFailed,
+        connectionId: connectionId,
+        sessionId: sessionId,
+        traceId: traceId,
+        action: PgPoolAction.queryFailed,
         query: query,
         substitutionValues: substitutionValues,
         elapsed: sw.elapsed,

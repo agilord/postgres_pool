@@ -2,7 +2,7 @@ import 'package:postgres_pool/postgres_pool.dart';
 
 Future<void> main() async {
   final pg = PgPool(
-    PgUrl(
+    PgEndpoint(
         host: 'localhost',
         port: 5432,
         database: 'test',
@@ -12,7 +12,6 @@ Future<void> main() async {
 
   final futures = <Future>[];
   for (var i = 0; i < 100; i++) {
-
     // pg.run schedules a callback function to be called when a connection
     // becomes available. We are not blocking on the result yet.
     final f = pg.run((c) async {
