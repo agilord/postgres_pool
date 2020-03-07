@@ -1,3 +1,7 @@
+## 2.0.1
+
+- More efficient way to close the pool.
+
 ## 2.0.0
 
 **BREAKING CHANGES**: refactor to match `package:cockroachdb_pool`'s requirements.

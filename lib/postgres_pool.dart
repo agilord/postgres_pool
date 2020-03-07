@@ -380,7 +380,7 @@ class PgPool implements PostgreSQLExecutionContext {
   Future close() async {
     await _executor.close();
     while (_connections.isNotEmpty) {
-      await _close(_connections.last);
+      await Future.wait(_connections.map(_close));
     }
     await _events.close();
   }
