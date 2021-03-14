@@ -1,3 +1,8 @@
+## 2.1.0-null-safety.1
+
+- Migration to null-safety.
+- **BREAKING CHANGE**: `PgEndpoint` required fields: `host` and `database`.
+
 ## 2.0.1
 
 - More efficient way to close the pool.

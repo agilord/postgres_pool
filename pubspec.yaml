@@ -1,15 +1,14 @@
 name: postgres_pool
 description: Postgresql connection pool with a wide range of automated reconnect parameters.
-version: 2.0.1
+version: 2.1.0-null-safety.1
 homepage: https://github.com/agilord/postgres_pool
 
 environment:
-  sdk: '>=2.7.0 <3.0.0'
+  sdk: '>=2.12.0 <3.0.0'
 
 dependencies:
   executor: ^2.0.0
-  meta: ^1.0.0
-  postgres: ^2.0.0
+  postgres: ^2.3.0-null-safety.1
   retry: ^3.0.0
 
 dev_dependencies:

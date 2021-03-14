@@ -3,7 +3,6 @@ import 'dart:io';
 import 'dart:math';
 
 import 'package:executor/executor.dart';
-import 'package:meta/meta.dart';
 import 'package:postgres/postgres.dart';
 import 'package:retry/retry.dart';
 
@@ -21,14 +20,14 @@ class PgEndpoint {
   final String host;
   final int port;
   final String database;
-  final String username;
-  final String password;
+  final String? username;
+  final String? password;
   final bool requireSsl;
 
   PgEndpoint({
-    this.host,
-    this.port,
-    this.database,
+    required this.host,
+    this.port = 5432,
+    required this.database,
     this.username,
     this.password,
     this.requireSsl = false,
@@ -59,12 +58,12 @@ class PgEndpoint {
   ///
   /// Parameters with `null` values are ignored (keeping current value).
   PgEndpoint replace({
-    String host,
-    int port,
-    String database,
-    String username,
-    String password,
-    bool requireSsl,
+    String? host,
+    int? port,
+    String? database,
+    String? username,
+    String? password,
+    bool? requireSsl,
   }) {
     return PgEndpoint(
       host: host ?? this.host,
@@ -130,34 +129,34 @@ class PgPoolEvent {
   final int connectionId;
 
   /// The identifier of the session (e.g. activity type)
-  final String sessionId;
+  final String? sessionId;
 
   /// The unique identifier of a request (used for correlating log entries).
-  final String traceId;
+  final String? traceId;
 
   /// One of [PgPoolAction] values.
   final String action;
 
   /// The SQL query (if there was any).
-  final String query;
+  final String? query;
 
   /// The SQL query's substitution values (if there was any).
-  final Map<String, dynamic> substitutionValues;
+  final Map<String, dynamic>? substitutionValues;
 
   /// The elapsed time since the operation started (if applicable).
-  final Duration elapsed;
+  final Duration? elapsed;
 
   /// The error object (if there was any).
   final dynamic error;
 
   /// The stack trace when the error happened (if there was any).
-  final StackTrace stackTrace;
+  final StackTrace? stackTrace;
 
   PgPoolEvent({
-    @required this.connectionId,
+    required this.connectionId,
     this.sessionId,
     this.traceId,
-    @required this.action,
+    required this.action,
     this.query,
     this.substitutionValues,
     this.elapsed,
@@ -189,9 +188,9 @@ class PgConnectionStatus {
   final DateTime opened;
 
   PgConnectionStatus({
-    @required this.connectionId,
-    @required this.isIdle,
-    @required this.opened,
+    required this.connectionId,
+    required this.isIdle,
+    required this.opened,
   });
 }
 
@@ -207,9 +206,9 @@ class PgPoolStatus {
   final int pendingSessionCount;
 
   PgPoolStatus({
-    @required this.connections,
-    @required this.activeSessionCount,
-    @required this.pendingSessionCount,
+    required this.connections,
+    required this.activeSessionCount,
+    required this.pendingSessionCount,
   });
 
   PgPoolStatus.fromPgPoolStatus(PgPoolStatus other)
@@ -285,10 +284,10 @@ class PgPool implements PostgreSQLExecutionContext {
   int _nextConnectionId = 1;
 
   /// Makes sure only one connection is opening at a time.
-  Completer _openCompleter;
+  Completer? _openCompleter;
   PgPoolSettings settings;
 
-  PgPool(PgEndpoint url, {PgPoolSettings settings})
+  PgPool(PgEndpoint url, {PgPoolSettings? settings})
       : settings = settings ?? PgPoolSettings(),
         _executor = Executor(),
         _url = url;
@@ -306,11 +305,11 @@ class PgPool implements PostgreSQLExecutionContext {
   /// Runs [fn] outside of a transaction.
   Future<R> run<R>(
     PgSessionFn<R> fn, {
-    RetryOptions retryOptions,
-    FutureOr<R> Function() orElse,
-    FutureOr<bool> Function(Exception) retryIf,
-    String sessionId,
-    String traceId,
+    RetryOptions? retryOptions,
+    FutureOr<R> Function()? orElse,
+    FutureOr<bool> Function(Exception)? retryIf,
+    String? sessionId,
+    String? traceId,
   }) async {
     retryOptions ??= settings.retryOptions;
     try {
@@ -340,13 +339,13 @@ class PgPool implements PostgreSQLExecutionContext {
   }
 
   /// Runs [fn] in a transaction.
-  Future<R> runTx<R>(
+  Future<R?> runTx<R>(
     PgSessionFn<R> fn, {
-    RetryOptions retryOptions,
-    FutureOr<R> Function() orElse,
-    FutureOr<bool> Function(Exception) retryIf,
-    String sessionId,
-    String traceId,
+    RetryOptions? retryOptions,
+    FutureOr<R> Function()? orElse,
+    FutureOr<bool> Function(Exception)? retryIf,
+    String? sessionId,
+    String? traceId,
   }) async {
     retryOptions ??= settings.retryOptions;
     try {
@@ -361,7 +360,7 @@ class PgPool implements PostgreSQLExecutionContext {
                 traceId,
                 _events,
               )),
-            ) as R;
+            ) as R?;
           });
         },
         retryIf: (e) async =>
@@ -392,7 +391,7 @@ class PgPool implements PostgreSQLExecutionContext {
     });
   }
 
-  _ConnectionCtx _lockIdle() {
+  _ConnectionCtx? _lockIdle() {
     final list = _connections.where((c) => c.isIdle).toList();
     if (list.isEmpty) return null;
     final entry =
@@ -401,7 +400,7 @@ class PgPool implements PostgreSQLExecutionContext {
     return entry;
   }
 
-  Future<_ConnectionCtx> _tryAcquireAvailable() async {
+  Future<_ConnectionCtx?> _tryAcquireAvailable() async {
     for (var ctx = _lockIdle(); ctx != null; ctx = _lockIdle()) {
       if (await _testConnection(ctx)) {
         return ctx;
@@ -443,7 +442,7 @@ class PgPool implements PostgreSQLExecutionContext {
 
   Future<_ConnectionCtx> _open() async {
     while (_openCompleter != null) {
-      await _openCompleter.future;
+      await _openCompleter!.future;
     }
     _openCompleter = Completer();
     final connectionId = _nextConnectionId++;
@@ -491,7 +490,7 @@ class PgPool implements PostgreSQLExecutionContext {
       }
       throw StateError('Should not reach this code.');
     } finally {
-      final c = _openCompleter;
+      final c = _openCompleter!;
       _openCompleter = null;
       c.complete();
     }
@@ -521,7 +520,7 @@ class PgPool implements PostgreSQLExecutionContext {
   Future _close(_ConnectionCtx ctx) async {
     ctx.isIdle = false;
     if (ctx.closingCompleter != null) {
-      await ctx.closingCompleter.future;
+      await ctx.closingCompleter!.future;
       return;
     }
     ctx.closingCompleter = Completer();
@@ -560,16 +559,16 @@ class PgPool implements PostgreSQLExecutionContext {
   @override
   Future<PostgreSQLResult> query(
     String fmtString, {
-    Map<String, dynamic> substitutionValues,
+    Map<String, dynamic>? substitutionValues,
     bool allowReuse = true,
-    int timeoutInSeconds,
-    String sessionId,
-    String traceId,
+    int? timeoutInSeconds,
+    String? sessionId,
+    String? traceId,
   }) {
     return run(
       (c) => c.query(
         fmtString,
-        substitutionValues: substitutionValues,
+        substitutionValues: substitutionValues!,
         allowReuse: allowReuse,
         timeoutInSeconds: timeoutInSeconds,
       ),
@@ -581,15 +580,15 @@ class PgPool implements PostgreSQLExecutionContext {
   @override
   Future<int> execute(
     String fmtString, {
-    Map<String, dynamic> substitutionValues,
-    int timeoutInSeconds,
-    String sessionId,
-    String traceId,
+    Map<String, dynamic>? substitutionValues,
+    int? timeoutInSeconds,
+    String? sessionId,
+    String? traceId,
   }) {
     return run(
       (c) => c.execute(
         fmtString,
-        substitutionValues: substitutionValues,
+        substitutionValues: substitutionValues!,
         timeoutInSeconds: timeoutInSeconds,
       ),
       sessionId: sessionId,
@@ -598,25 +597,25 @@ class PgPool implements PostgreSQLExecutionContext {
   }
 
   @override
-  void cancelTransaction({String reason}) {
+  void cancelTransaction({String? reason}) {
     // no-op
   }
 
   @override
   Future<List<Map<String, Map<String, dynamic>>>> mappedResultsQuery(
     String fmtString, {
-    Map<String, dynamic> substitutionValues,
+    Map<String, dynamic>? substitutionValues,
     bool allowReuse = true,
-    int timeoutInSeconds,
-    String sessionId,
-    String traceId,
+    int? timeoutInSeconds,
+    String? sessionId,
+    String? traceId,
   }) {
     return run(
       (c) => c.mappedResultsQuery(
         fmtString,
-        substitutionValues: substitutionValues,
+        substitutionValues: substitutionValues!,
         allowReuse: allowReuse,
-        timeoutInSeconds: timeoutInSeconds,
+        timeoutInSeconds: timeoutInSeconds!,
       ),
       sessionId: sessionId,
       traceId: traceId,
@@ -628,12 +627,12 @@ class _ConnectionCtx {
   final int connectionId;
   final PostgreSQLConnection connection;
   final DateTime opened;
-  DateTime lastReturned;
+  late DateTime lastReturned;
   int queryCount = 0;
   int errorCount = 0;
   Duration elapsed = Duration.zero;
   bool isIdle = false;
-  Completer closingCompleter;
+  Completer? closingCompleter;
 
   _ConnectionCtx(this.connectionId, this.connection) : opened = DateTime.now();
 
@@ -649,8 +648,8 @@ class _ConnectionCtx {
 class _PgExecutionContextWrapper implements PostgreSQLExecutionContext {
   final int connectionId;
   final PostgreSQLExecutionContext _delegate;
-  final String sessionId;
-  final String traceId;
+  final String? sessionId;
+  final String? traceId;
   final Sink<PgPoolEvent> _eventSink;
 
   _PgExecutionContextWrapper(
@@ -664,7 +663,7 @@ class _PgExecutionContextWrapper implements PostgreSQLExecutionContext {
   Future<R> _run<R>(
     Future<R> Function() body,
     String query,
-    Map<String, dynamic> substitutionValues,
+    Map<String, dynamic>? substitutionValues,
   ) async {
     final sw = Stopwatch()..start();
     try {
@@ -706,17 +705,17 @@ class _PgExecutionContextWrapper implements PostgreSQLExecutionContext {
   }
 
   @override
-  void cancelTransaction({String reason}) {
+  void cancelTransaction({String? reason}) {
     _delegate.cancelTransaction(reason: reason);
   }
 
   @override
   Future<int> execute(String fmtString,
-      {Map<String, dynamic> substitutionValues, int timeoutInSeconds}) {
+      {Map<String, dynamic>? substitutionValues, int? timeoutInSeconds}) {
     return _run(
       () => _delegate.execute(
         fmtString,
-        substitutionValues: substitutionValues,
+        substitutionValues: substitutionValues!,
         timeoutInSeconds: timeoutInSeconds,
       ),
       fmtString,
@@ -726,13 +725,13 @@ class _PgExecutionContextWrapper implements PostgreSQLExecutionContext {
 
   @override
   Future<PostgreSQLResult> query(String fmtString,
-      {Map<String, dynamic> substitutionValues,
+      {Map<String, dynamic>? substitutionValues,
       bool allowReuse = true,
-      int timeoutInSeconds}) {
+      int? timeoutInSeconds}) {
     return _run(
       () => _delegate.query(
         fmtString,
-        substitutionValues: substitutionValues,
+        substitutionValues: substitutionValues!,
         allowReuse: allowReuse,
         timeoutInSeconds: timeoutInSeconds,
       ),
@@ -744,15 +743,15 @@ class _PgExecutionContextWrapper implements PostgreSQLExecutionContext {
   @override
   Future<List<Map<String, Map<String, dynamic>>>> mappedResultsQuery(
       String fmtString,
-      {Map<String, dynamic> substitutionValues,
+      {Map<String, dynamic>? substitutionValues,
       bool allowReuse = true,
-      int timeoutInSeconds}) {
+      int? timeoutInSeconds}) {
     return _run(
       () => _delegate.mappedResultsQuery(
         fmtString,
-        substitutionValues: substitutionValues,
+        substitutionValues: substitutionValues!,
         allowReuse: allowReuse,
-        timeoutInSeconds: timeoutInSeconds,
+        timeoutInSeconds: timeoutInSeconds!,
       ),
       fmtString,
       substitutionValues,
