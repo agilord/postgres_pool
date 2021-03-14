@@ -339,7 +339,7 @@ class PgPool implements PostgreSQLExecutionContext {
   }
 
   /// Runs [fn] in a transaction.
-  Future<R?> runTx<R>(
+  Future<R> runTx<R>(
     PgSessionFn<R> fn, {
     RetryOptions? retryOptions,
     FutureOr<R> Function()? orElse,
@@ -360,7 +360,7 @@ class PgPool implements PostgreSQLExecutionContext {
                 traceId,
                 _events,
               )),
-            ) as R?;
+            ) as R;
           });
         },
         retryIf: (e) async =>
@@ -560,7 +560,7 @@ class PgPool implements PostgreSQLExecutionContext {
   Future<PostgreSQLResult> query(
     String fmtString, {
     Map<String, dynamic>? substitutionValues,
-    bool allowReuse = true,
+    bool? allowReuse = true,
     int? timeoutInSeconds,
     String? sessionId,
     String? traceId,
@@ -568,7 +568,7 @@ class PgPool implements PostgreSQLExecutionContext {
     return run(
       (c) => c.query(
         fmtString,
-        substitutionValues: substitutionValues!,
+        substitutionValues: substitutionValues,
         allowReuse: allowReuse,
         timeoutInSeconds: timeoutInSeconds,
       ),
@@ -605,7 +605,7 @@ class PgPool implements PostgreSQLExecutionContext {
   Future<List<Map<String, Map<String, dynamic>>>> mappedResultsQuery(
     String fmtString, {
     Map<String, dynamic>? substitutionValues,
-    bool allowReuse = true,
+    bool? allowReuse = true,
     int? timeoutInSeconds,
     String? sessionId,
     String? traceId,
@@ -715,7 +715,7 @@ class _PgExecutionContextWrapper implements PostgreSQLExecutionContext {
     return _run(
       () => _delegate.execute(
         fmtString,
-        substitutionValues: substitutionValues!,
+        substitutionValues: substitutionValues,
         timeoutInSeconds: timeoutInSeconds,
       ),
       fmtString,
@@ -726,7 +726,7 @@ class _PgExecutionContextWrapper implements PostgreSQLExecutionContext {
   @override
   Future<PostgreSQLResult> query(String fmtString,
       {Map<String, dynamic>? substitutionValues,
-      bool allowReuse = true,
+      bool? allowReuse = true,
       int? timeoutInSeconds}) {
     return _run(
       () => _delegate.query(
@@ -744,7 +744,7 @@ class _PgExecutionContextWrapper implements PostgreSQLExecutionContext {
   Future<List<Map<String, Map<String, dynamic>>>> mappedResultsQuery(
       String fmtString,
       {Map<String, dynamic>? substitutionValues,
-      bool allowReuse = true,
+      bool? allowReuse = true,
       int? timeoutInSeconds}) {
     return _run(
       () => _delegate.mappedResultsQuery(

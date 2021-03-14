@@ -1,3 +1,7 @@
+## 2.1.0-null-safety.2
+
+- Fixed public API changes from upstream `package:postgres`.
+
 ## 2.1.0-null-safety.1
 
 - Migration to null-safety.
