@@ -588,7 +588,7 @@ class PgPool implements PostgreSQLExecutionContext {
     return run(
       (c) => c.execute(
         fmtString,
-        substitutionValues: substitutionValues!,
+        substitutionValues: substitutionValues,
         timeoutInSeconds: timeoutInSeconds,
       ),
       sessionId: sessionId,
@@ -613,9 +613,9 @@ class PgPool implements PostgreSQLExecutionContext {
     return run(
       (c) => c.mappedResultsQuery(
         fmtString,
-        substitutionValues: substitutionValues!,
+        substitutionValues: substitutionValues,
         allowReuse: allowReuse,
-        timeoutInSeconds: timeoutInSeconds!,
+        timeoutInSeconds: timeoutInSeconds,
       ),
       sessionId: sessionId,
       traceId: traceId,
@@ -731,7 +731,7 @@ class _PgExecutionContextWrapper implements PostgreSQLExecutionContext {
     return _run(
       () => _delegate.query(
         fmtString,
-        substitutionValues: substitutionValues!,
+        substitutionValues: substitutionValues,
         allowReuse: allowReuse,
         timeoutInSeconds: timeoutInSeconds,
       ),
@@ -749,9 +749,9 @@ class _PgExecutionContextWrapper implements PostgreSQLExecutionContext {
     return _run(
       () => _delegate.mappedResultsQuery(
         fmtString,
-        substitutionValues: substitutionValues!,
+        substitutionValues: substitutionValues,
         allowReuse: allowReuse,
-        timeoutInSeconds: timeoutInSeconds!,
+        timeoutInSeconds: timeoutInSeconds,
       ),
       fmtString,
       substitutionValues,
