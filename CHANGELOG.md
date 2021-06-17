@@ -1,3 +1,7 @@
+## 2.1.1
+
+- Removed bang operators from optional parameters. ([#3](https://github.com/agilord/postgres_pool/pull/3) by [jimmyff](https://github.com/jimmyff))
+
 ## 2.1.0
 
 - Final null-safe release.
