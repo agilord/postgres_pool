@@ -273,6 +273,7 @@ class PgPoolSettings {
     maxErrorCount = other.maxErrorCount;
     maxQueryCount = other.maxQueryCount;
     retryOptions = other.retryOptions;
+    timeZone = other.timeZone;
   }
 }
 
