@@ -1,3 +1,7 @@
+## 2.1.2
+
+- Added `PgPoolSettings.timeZone`. ([#5](https://github.com/agilord/postgres_pool/pull/5) by [eduardotd](https://github.com/eduardotd))
+
 ## 2.1.1
 
 - Removed bang operators from optional parameters. ([#3](https://github.com/agilord/postgres_pool/pull/3) by [jimmyff](https://github.com/jimmyff))

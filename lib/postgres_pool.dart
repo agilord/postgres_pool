@@ -458,13 +458,17 @@ class PgPool implements PostgreSQLExecutionContext {
       for (var i = 3; i > 0; i--) {
         final sw = Stopwatch()..start();
         try {
-          final c = PostgreSQLConnection(_url.host, _url.port, _url.database,
-              username: _url.username,
-              password: _url.password,
-              useSSL: _url.requireSsl,
-              timeoutInSeconds: settings.connectTimeout.inSeconds,
-              queryTimeoutInSeconds: settings.queryTimeout.inSeconds,
-              timeZone: settings.timeZone);
+          final c = PostgreSQLConnection(
+            _url.host,
+            _url.port,
+            _url.database,
+            username: _url.username,
+            password: _url.password,
+            useSSL: _url.requireSsl,
+            timeoutInSeconds: settings.connectTimeout.inSeconds,
+            queryTimeoutInSeconds: settings.queryTimeout.inSeconds,
+            timeZone: settings.timeZone,
+          );
           await c.open();
           final ctx = _ConnectionCtx(connectionId, c);
           _connections.add(ctx);
