@@ -252,6 +252,9 @@ class PgPoolSettings {
   /// New sessions won't be scheduled after this limit is reached.
   int maxQueryCount = 1024 * 1024;
 
+  /// Timezone for the connetion
+  String timeZone = 'UTC';
+
   /// The default retry options for `run` / `runTx` operations.
   RetryOptions retryOptions = RetryOptions(
     maxAttempts: 1,
@@ -454,16 +457,13 @@ class PgPool implements PostgreSQLExecutionContext {
       for (var i = 3; i > 0; i--) {
         final sw = Stopwatch()..start();
         try {
-          final c = PostgreSQLConnection(
-            _url.host,
-            _url.port,
-            _url.database,
-            username: _url.username,
-            password: _url.password,
-            useSSL: _url.requireSsl,
-            timeoutInSeconds: settings.connectTimeout.inSeconds,
-            queryTimeoutInSeconds: settings.queryTimeout.inSeconds,
-          );
+          final c = PostgreSQLConnection(_url.host, _url.port, _url.database,
+              username: _url.username,
+              password: _url.password,
+              useSSL: _url.requireSsl,
+              timeoutInSeconds: settings.connectTimeout.inSeconds,
+              queryTimeoutInSeconds: settings.queryTimeout.inSeconds,
+              timeZone: settings.timeZone);
           await c.open();
           final ctx = _ConnectionCtx(connectionId, c);
           _connections.add(ctx);
