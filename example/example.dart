@@ -3,11 +3,15 @@ import 'package:postgres_pool/postgres_pool.dart';
 Future<void> main() async {
   final pg = PgPool(
     PgEndpoint(
-        host: 'localhost',
-        port: 5432,
-        database: 'test',
-        username: 'test',
-        password: 'test'),
+      host: 'localhost',
+      port: 5432,
+      database: 'test',
+      username: 'test',
+      password: 'test',
+    ),
+    settings: PgPoolSettings()
+      ..maxConnectionAge = Duration(hours: 1)
+      ..concurrency = 4,
   );
 
   final futures = <Future>[];
