@@ -45,6 +45,7 @@ class PgEndpoint {
     final userInfoParts = uri.userInfo.split(':');
     final username = userInfoParts.length == 2 ? userInfoParts[0] : null;
     final password = userInfoParts.length == 2 ? userInfoParts[1] : null;
+    final isUnixSocketParam = uri.queryParameters['is-unix-socket'];
     return PgEndpoint(
       host: uri.host,
       port: uri.port,
@@ -52,6 +53,7 @@ class PgEndpoint {
       username: username ?? uri.queryParameters['username'],
       password: password ?? uri.queryParameters['password'],
       requireSsl: uri.queryParameters['sslmode'] == 'require',
+      isUnixSocket: isUnixSocketParam == '1',
     );
   }
 
@@ -66,6 +68,7 @@ class PgEndpoint {
     String? username,
     String? password,
     bool? requireSsl,
+    bool? isUnixSocket,
   }) {
     return PgEndpoint(
       host: host ?? this.host,
@@ -74,6 +77,7 @@ class PgEndpoint {
       username: username ?? this.username,
       password: password ?? this.password,
       requireSsl: requireSsl ?? this.requireSsl,
+      isUnixSocket: isUnixSocket ?? this.isUnixSocket,
     );
   }
 
@@ -87,6 +91,7 @@ class PgEndpoint {
           'username': username,
           'password': password,
           'sslmode': requireSsl ? 'require' : 'allow',
+          if (isUnixSocket) 'is-unix-socket': '1',
         },
       ).toString();
 
@@ -100,7 +105,8 @@ class PgEndpoint {
           database == other.database &&
           username == other.username &&
           password == other.password &&
-          requireSsl == other.requireSsl;
+          requireSsl == other.requireSsl &&
+          isUnixSocket == other.isUnixSocket;
 
   @override
   int get hashCode =>
@@ -109,7 +115,8 @@ class PgEndpoint {
       database.hashCode ^
       username.hashCode ^
       password.hashCode ^
-      requireSsl.hashCode;
+      requireSsl.hashCode ^
+      isUnixSocket.hashCode;
 }
 
 /// The list of [PgPool] actions.
