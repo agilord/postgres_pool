@@ -23,6 +23,7 @@ class PgEndpoint {
   final String? username;
   final String? password;
   final bool requireSsl;
+  final bool isUnixSocket;
 
   PgEndpoint({
     required this.host,
@@ -31,6 +32,7 @@ class PgEndpoint {
     this.username,
     this.password,
     this.requireSsl = false,
+    this.isUnixSocket = false,
   });
 
   /// Parses the most common connection URL formats:
@@ -465,6 +467,7 @@ class PgPool implements PostgreSQLExecutionContext {
             username: _url.username,
             password: _url.password,
             useSSL: _url.requireSsl,
+            isUnixSocket: _url.isUnixSocket,
             timeoutInSeconds: settings.connectTimeout.inSeconds,
             queryTimeoutInSeconds: settings.queryTimeout.inSeconds,
             timeZone: settings.timeZone,
