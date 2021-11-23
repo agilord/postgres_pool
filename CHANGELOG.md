@@ -1,3 +1,7 @@
+## 2.1.3
+
+- Added `PgEndpoint.isUnixSocket`. ([9](https://github.com/agilord/postgres_pool/pull/9) by [davidmartos96](https://github.com/davidmartos96))
+
 ## 2.1.2
 
 - Added `PgPoolSettings.timeZone`. ([#5](https://github.com/agilord/postgres_pool/pull/5) by [eduardotd](https://github.com/eduardotd))
