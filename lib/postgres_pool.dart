@@ -577,6 +577,7 @@ class PgPool implements PostgreSQLExecutionContext {
     Map<String, dynamic>? substitutionValues,
     bool? allowReuse = true,
     int? timeoutInSeconds,
+    bool? useSimpleQueryProtocol,
     String? sessionId,
     String? traceId,
   }) {
@@ -586,6 +587,7 @@ class PgPool implements PostgreSQLExecutionContext {
         substitutionValues: substitutionValues,
         allowReuse: allowReuse,
         timeoutInSeconds: timeoutInSeconds,
+        useSimpleQueryProtocol: useSimpleQueryProtocol,
       ),
       sessionId: sessionId,
       traceId: traceId,
@@ -742,13 +744,15 @@ class _PgExecutionContextWrapper implements PostgreSQLExecutionContext {
   Future<PostgreSQLResult> query(String fmtString,
       {Map<String, dynamic>? substitutionValues,
       bool? allowReuse = true,
-      int? timeoutInSeconds}) {
+      int? timeoutInSeconds,
+      bool? useSimpleQueryProtocol}) {
     return _run(
       () => _delegate.query(
         fmtString,
         substitutionValues: substitutionValues,
         allowReuse: allowReuse,
         timeoutInSeconds: timeoutInSeconds,
+        useSimpleQueryProtocol: useSimpleQueryProtocol,
       ),
       fmtString,
       substitutionValues,
