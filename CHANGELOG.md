@@ -1,3 +1,7 @@
+## 2.1.4
+
+- Fixed API changes from `package:postgres` 2.5.0.
+
 ## 2.1.3
 
 - Added `PgEndpoint.isUnixSocket`. ([9](https://github.com/agilord/postgres_pool/pull/9) by [davidmartos96](https://github.com/davidmartos96))
