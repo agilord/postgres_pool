@@ -1,3 +1,7 @@
+## 2.1.5
+
+- Fixed concurrent modifiction bug. ([#14](https://github.com/agilord/postgres_pool/pull/14) by [nick-llewellyn](https://github.com/nick-llewellyn)).
+
 ## 2.1.4
 
 - Fixed API changes from `package:postgres` 2.5.0.
