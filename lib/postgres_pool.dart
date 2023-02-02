@@ -25,6 +25,15 @@ class PgEndpoint {
   final bool requireSsl;
   final bool isUnixSocket;
 
+  /// If provided, it will set that name to the Postgres connection for debugging
+  /// purposes.
+  /// If a different name is desired for different connections opened by the pool,
+  /// the name can contain '{{connectionId}}' which would get replaced at run time.
+  ///
+  /// Active connections and their names can be obtained in Postgres with
+  /// `SELECT * FROM pg_stat_activity`
+  final String? applicationName;
+
   PgEndpoint({
     required this.host,
     this.port = 5432,
@@ -33,6 +42,7 @@ class PgEndpoint {
     this.password,
     this.requireSsl = false,
     this.isUnixSocket = false,
+    this.applicationName,
   });
 
   /// Parses the most common connection URL formats:
@@ -483,6 +493,16 @@ class PgPool implements PostgreSQLExecutionContext {
           final ctx = _ConnectionCtx(connectionId, c);
           _connections.add(ctx);
 
+          // Set the application connection name
+          final applicationName = _url.applicationName;
+          if (applicationName != null) {
+            await _setApplicationName(
+              c,
+              applicationName: applicationName,
+              connectionId: connectionId,
+            );
+          }
+
           _events.add(PgPoolEvent(
             connectionId: connectionId,
             action: PgPoolAction.connectingCompleted,
@@ -636,6 +656,26 @@ class PgPool implements PostgreSQLExecutionContext {
       ),
       sessionId: sessionId,
       traceId: traceId,
+    );
+  }
+
+  /// Sets the application_name to the provided postgres connection
+  /// Current implementation is done by executing a postgres command.
+  /// A future improvement could be to send the application_name
+  /// through the postgres messaging protocol
+  Future<void> _setApplicationName(
+    PostgreSQLConnection pgConn, {
+    required String applicationName,
+    required int connectionId,
+  }) async {
+    // The connectionId can be injected into the name at runtime
+    final effectiveName = applicationName.replaceAll('{{connectionId}}', connectionId.toString());
+
+    await pgConn.execute(
+      'SET application_name = @app_name',
+      substitutionValues: {
+        'app_name': effectiveName,
+      },
     );
   }
 }
