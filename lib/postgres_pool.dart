@@ -48,6 +48,7 @@ class PgEndpoint {
   /// Parses the most common connection URL formats:
   /// - postgresql://user:password@host:port/dbname
   /// - postgresql://host:port/dbname?username=user&password=pwd
+  /// - postgresql://host:port/dbname?application_name=myapp
   ///
   /// Set ?sslmode=require to force secure SSL connection.
   factory PgEndpoint.parse(url) {
@@ -56,6 +57,8 @@ class PgEndpoint {
     final username = userInfoParts.length == 2 ? userInfoParts[0] : null;
     final password = userInfoParts.length == 2 ? userInfoParts[1] : null;
     final isUnixSocketParam = uri.queryParameters['is-unix-socket'];
+    final applicationNameParam = uri.queryParameters['application_name'];
+
     return PgEndpoint(
       host: uri.host,
       port: uri.port,
@@ -64,6 +67,7 @@ class PgEndpoint {
       password: password ?? uri.queryParameters['password'],
       requireSsl: uri.queryParameters['sslmode'] == 'require',
       isUnixSocket: isUnixSocketParam == '1',
+      applicationName: applicationNameParam,
     );
   }
 
@@ -79,6 +83,7 @@ class PgEndpoint {
     String? password,
     bool? requireSsl,
     bool? isUnixSocket,
+    String? Function()? applicationName,
   }) {
     return PgEndpoint(
       host: host ?? this.host,
@@ -88,6 +93,7 @@ class PgEndpoint {
       password: password ?? this.password,
       requireSsl: requireSsl ?? this.requireSsl,
       isUnixSocket: isUnixSocket ?? this.isUnixSocket,
+      applicationName: applicationName == null ? this.applicationName : applicationName(),
     );
   }
 
@@ -102,6 +108,7 @@ class PgEndpoint {
           'password': password,
           'sslmode': requireSsl ? 'require' : 'allow',
           if (isUnixSocket) 'is-unix-socket': '1',
+          if (applicationName != null) 'application_name': applicationName,
         },
       ).toString();
 
@@ -116,7 +123,8 @@ class PgEndpoint {
           username == other.username &&
           password == other.password &&
           requireSsl == other.requireSsl &&
-          isUnixSocket == other.isUnixSocket;
+          isUnixSocket == other.isUnixSocket &&
+          applicationName == other.applicationName;
 
   @override
   int get hashCode =>
@@ -126,7 +134,8 @@ class PgEndpoint {
       username.hashCode ^
       password.hashCode ^
       requireSsl.hashCode ^
-      isUnixSocket.hashCode;
+      isUnixSocket.hashCode ^
+      applicationName.hashCode;
 }
 
 /// The list of [PgPool] actions.
