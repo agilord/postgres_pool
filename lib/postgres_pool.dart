@@ -93,7 +93,8 @@ class PgEndpoint {
       password: password ?? this.password,
       requireSsl: requireSsl ?? this.requireSsl,
       isUnixSocket: isUnixSocket ?? this.isUnixSocket,
-      applicationName: applicationName == null ? this.applicationName : applicationName(),
+      applicationName:
+          applicationName == null ? this.applicationName : applicationName(),
     );
   }
 
@@ -678,7 +679,8 @@ class PgPool implements PostgreSQLExecutionContext {
     required int connectionId,
   }) async {
     // The connectionId can be injected into the name at runtime
-    final effectiveName = applicationName.replaceAll('{{connectionId}}', connectionId.toString());
+    final effectiveName =
+        applicationName.replaceAll('{{connectionId}}', connectionId.toString());
 
     await pgConn.execute(
       'SET application_name = @app_name',
