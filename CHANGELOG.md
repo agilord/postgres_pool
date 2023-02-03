@@ -1,3 +1,7 @@
+## 2.1.6
+
+- Added `PgEndpoint.applicationName` to configure the name of the connections opened by the pool. ([#16)(https://github.com/agilord/postgres_pool/pull/16) by [davidmartos96](https://github.com/davidmartos96))
+
 ## 2.1.5
 
 - Fixed concurrent modifiction bug. ([#14](https://github.com/agilord/postgres_pool/pull/14) by [nick-llewellyn](https://github.com/nick-llewellyn)).
