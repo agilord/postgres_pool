@@ -1,5 +1,6 @@
 ## 2.1.6
-- Added `PgEndpoint.applicationName` to configure the name of the connections opened by the pool.
+
+- Added `PgEndpoint.applicationName` to configure the name of the connections opened by the pool. ([#16)(https://github.com/agilord/postgres_pool/pull/16) by [davidmartos96](https://github.com/davidmartos96))
 
 ## 2.1.5
 
