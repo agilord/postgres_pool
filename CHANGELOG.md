@@ -1,3 +1,10 @@
+## 2.1.6+1
+
+**Discontinued**
+
+`package:postgres` from `^3.0.0` supports connection pooling as part of the core
+library. Development and advanced pooling support will be migrated to that package.
+
 ## 2.1.6
 
 - Added `PgEndpoint.applicationName` to configure the name of the connections opened by the pool. ([#16)(https://github.com/agilord/postgres_pool/pull/16) by [davidmartos96](https://github.com/davidmartos96))

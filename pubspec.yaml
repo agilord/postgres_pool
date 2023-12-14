@@ -1,6 +1,6 @@
 name: postgres_pool
 description: Postgresql connection pool with a wide range of automated reconnect parameters.
-version: 2.1.6
+version: 2.1.6+1
 homepage: https://github.com/agilord/postgres_pool
 
 environment:
